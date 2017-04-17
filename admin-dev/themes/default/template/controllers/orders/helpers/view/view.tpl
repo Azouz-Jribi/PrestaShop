@@ -27,6 +27,7 @@
 
 {block name="override_tpl"}
 	<script type="text/javascript">
+	var discount_information = {$order->getDiscountInformation(true)};
 	var admin_order_tab_link = "{$link->getAdminLink('AdminOrders')|addslashes}";
 	var id_order = {$order->id};
 	var id_lang = {$current_id_lang};

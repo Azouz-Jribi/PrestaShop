@@ -103,9 +103,9 @@
 					<td class="white left" colspan="3">{$cart_rule.name}</td>
 					<td class="white right">
 						{if $tax_excluded_display}
-							+ {$cart_rule.value_tax_excl}
+							+ {displayPrice currency=$order->id_currency price=$cart_rule.value_tax_excl}
 						{else}
-							+ {$cart_rule.value}
+							+ {displayPrice currency=$order->id_currency price=$cart_rule.value}
 						{/if}
 					</td>
 				</tr>

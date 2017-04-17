@@ -91,6 +91,7 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
         $customer = new Customer((int)$this->order->id_customer);
         $this->order->total_paid_tax_excl = $this->order->total_paid_tax_incl = $this->order->total_products = $this->order->total_products_wt = 0;
 
+        $products_discounted = array();
         if ($this->order_slip->amount > 0) {
             foreach ($this->order->products as &$product) {
                 $product['total_price_tax_excl'] = $product['unit_price_tax_excl'] * $product['product_quantity'];
@@ -98,9 +99,9 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
 
                 if ($this->order_slip->partial == 1) {
                     $order_slip_detail = Db::getInstance()->getRow('
-						SELECT * FROM `'._DB_PREFIX_.'order_slip_detail`
-						WHERE `id_order_slip` = '.(int)$this->order_slip->id.'
-						AND `id_order_detail` = '.(int)$product['id_order_detail']);
+                        SELECT * FROM `'._DB_PREFIX_.'order_slip_detail`
+                        WHERE `id_order_slip` = '.(int)$this->order_slip->id.'
+                        AND `id_order_detail` = '.(int)$product['id_order_detail']);
 
                     $product['total_price_tax_excl'] = $order_slip_detail['amount_tax_excl'];
                     $product['total_price_tax_incl'] = $order_slip_detail['amount_tax_incl'];
@@ -110,6 +111,10 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
                 $this->order->total_products_wt += $product['total_price_tax_incl'];
                 $this->order->total_paid_tax_excl = $this->order->total_products;
                 $this->order->total_paid_tax_incl = $this->order->total_products_wt;
+
+                $products_discounted[$product['product_id']]['unit_price_tax_excl'] = $product['unit_price_tax_excl'];
+                $products_discounted[$product['product_id']]['unit_price_tax_incl'] = $product['unit_price_tax_incl'];
+                $products_discounted[$product['product_id']]['product_quantity'] = $product['product_quantity'];
             }
         } else {
             $this->order->products = null;
@@ -123,7 +128,7 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
 
         $tax = new Tax();
         $tax->rate = $this->order->carrier_tax_rate;
-        $tax_calculator = new TaxCalculator(array($tax));
+        $tax_calculator = new TaxCalculator(array($tax));// not used
         $tax_excluded_display = Group::getPriceDisplayMethod((int)$customer->id_default_group);
 
         $this->order->total_shipping_tax_incl = $this->order_slip->total_shipping_tax_incl;
@@ -133,38 +138,84 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
         $this->order->total_paid_tax_incl += $this->order->total_shipping_tax_incl;
         $this->order->total_paid_tax_excl += $this->order->total_shipping_tax_excl;
 
-        $total_cart_rule = 0;
+        $total_cart_rule_excl = 0;
+        $total_cart_rule_incl = 0;
+        $order_carts_rules = array();
         if ($this->order_slip->order_slip_type == 1 && is_array($cart_rules = $this->order->getCartRules($this->order_invoice->id))) {
             foreach ($cart_rules as $cart_rule) {
-                if ($tax_excluded_display) {
-                    $total_cart_rule += $cart_rule['value_tax_excl'];
-                } else {
-                    $total_cart_rule += $cart_rule['value'];
+                $cart = new CartRule( $cart_rule['id_cart_rule'] );
+                /** compute discount */
+                $reduction_percent = $this->order->discountCalculator($cart);
+//                if ( 0 !== (int) $cart->reduction_percent ) {
+//                    $reduction_percent = Tools::ps_round( ($cart->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
+//                }
+//                elseif ( 0 !== (int) $cart->reduction_amount ) {
+//                    $reduction_percent = 100 / ($original_order->total_products / $cart->reduction_amount);
+//                    $reduction_percent = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
+//                }else{
+//                    $reduction_percent = 0;
+//                }
+
+                if ( !empty($discount_products = $cart->getProductRuleGroups()) ) {
+                    foreach ( $discount_products as $id_product_rule_group => $product_rule_group ) {
+                        foreach ( $product_rule_group['product_rules'] as $product_rule ) {
+                            if ( "products" === $product_rule['type'] ) {
+                                $index = $product_rule['values'][0];
+                                if ( array_key_exists($index , $products_discounted ) ) {
+                                    $original_order = new Order( (int) $this->order->id );
+                                    $product = $original_order->getProductDetailByIdProduct($index);
+                                    /** recompute amount discount and voucher discount */
+                                    if ( 0 !== (int) $cart->reduction_percent && null !== $product) {
+                                        $cart_rule['value'] /= $product['product_quantity'];
+                                        $cart_rule['value_tax_excl'] /= $product['product_quantity'];
+                                    }
+                                    elseif ( 0 !== (int) $cart->reduction_amount && NULL !== $product ) {
+                                        $reduction_percent = 100 / ($product['total_price_tax_excl'] / $cart->reduction_amount);
+                                        $reduction_percent = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
+                                        $cart_rule['value'] /= $product['product_quantity'];
+                                        $cart_rule['value_tax_excl'] /= $product['product_quantity'];
+                                    }
+                                    $order_carts_rules[] = $cart_rule;
+                                    $total_cart_rule_excl += ($products_discounted[$index]['unit_price_tax_excl'] * $reduction_percent) * $products_discounted[$index]['product_quantity'];
+                                    $total_cart_rule_incl += ($products_discounted[$index]['unit_price_tax_incl'] * $reduction_percent) * $products_discounted[$index]['product_quantity'] ;
+                                }
+                            }
+                        }
+                    }
+                }else{
+                    foreach ( $products_discounted as $index => $product ) {
+                        $total_cart_rule_excl += ($products_discounted[$index]['unit_price_tax_excl'] * $reduction_percent) * $products_discounted[$index]['product_quantity'];
+                        $total_cart_rule_incl += ($products_discounted[$index]['unit_price_tax_incl'] * $reduction_percent) * $products_discounted[$index]['product_quantity'] ;
+                    }
+                    $cart_rule['value_tax_excl'] = $this->order->total_products - ($this->order->total_paid_tax_excl - $total_cart_rule_excl);
+                    $cart_rule['value'] = $this->order->total_products_wt - ($this->order->total_paid_tax_incl - $total_cart_rule_incl);
+                    $order_carts_rules[] = $cart_rule;
                 }
             }
+            $this->order->total_paid_tax_incl -= $total_cart_rule_incl ;
+            $this->order->total_paid_tax_excl -= $total_cart_rule_excl;
         }
 
         $this->smarty->assign(array(
-            'order' => $this->order,
-            'order_slip' => $this->order_slip,
-            'order_details' => $this->order->products,
-            'cart_rules' => $this->order_slip->order_slip_type == 1 ? $this->order->getCartRules($this->order_invoice->id) : false,
-            'amount_choosen' => $this->order_slip->order_slip_type == 2 ? true : false,
-            'delivery_address' => $formatted_delivery_address,
-            'invoice_address' => $formatted_invoice_address,
-            'addresses' => array('invoice' => $invoice_address, 'delivery' => $delivery_address),
-            'tax_excluded_display' => $tax_excluded_display,
-            'total_cart_rule' => $total_cart_rule
+          'order' => $this->order,
+          'order_slip' => $this->order_slip,
+          'order_details' => $this->order->products,
+          'cart_rules' => $this->order_slip->order_slip_type == 1 ? $order_carts_rules : false,
+          'amount_choosen' => $this->order_slip->order_slip_type == 2 ? true : false,
+          'delivery_address' => $formatted_delivery_address,
+          'invoice_address' => $formatted_invoice_address,
+          'addresses' => array('invoice' => $invoice_address, 'delivery' => $delivery_address),
+          'tax_excluded_display' => $tax_excluded_display
         ));
 
         $tpls = array(
-            'style_tab' => $this->smarty->fetch($this->getTemplate('invoice.style-tab')),
-            'addresses_tab' => $this->smarty->fetch($this->getTemplate('invoice.addresses-tab')),
-            'summary_tab' => $this->smarty->fetch($this->getTemplate('order-slip.summary-tab')),
-            'product_tab' => $this->smarty->fetch($this->getTemplate('order-slip.product-tab')),
-            'total_tab' => $this->smarty->fetch($this->getTemplate('order-slip.total-tab')),
-            'payment_tab' => $this->smarty->fetch($this->getTemplate('order-slip.payment-tab')),
-            'tax_tab' => $this->getTaxTabContent(),
+          'style_tab' => $this->smarty->fetch($this->getTemplate('invoice.style-tab')),
+          'addresses_tab' => $this->smarty->fetch($this->getTemplate('invoice.addresses-tab')),
+          'summary_tab' => $this->smarty->fetch($this->getTemplate('order-slip.summary-tab')),
+          'product_tab' => $this->smarty->fetch($this->getTemplate('order-slip.product-tab')),
+          'total_tab' => $this->smarty->fetch($this->getTemplate('order-slip.total-tab')),
+          'payment_tab' => $this->smarty->fetch($this->getTemplate('order-slip.payment-tab')),
+          'tax_tab' => $this->getTaxTabContent(),
         );
         $this->smarty->assign($tpls);
 

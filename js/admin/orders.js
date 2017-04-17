@@ -941,25 +941,58 @@ function actualizeRefundVoucher()
 
 function actualizeTotalRefundVoucher()
 {
-	var total = 0.0;
+	var total_tax_incl = 0.0;
+	var total_discount_tax_incl = 0.0;
 	$('.edit_product_price_tax_incl.edit_product_price').each(function(){
 		quantity_refund_product = parseFloat($(this).closest('td').parent().find('td.cancelQuantity').children().val());
-		if (typeof quantity_refund_product !== 'undefined' && quantity_refund_product > 0)
-			total += $(this).val() * quantity_refund_product;
+		if (typeof quantity_refund_product !== 'undefined' && quantity_refund_product > 0){
+			/** get id_order_detail */
+			id_order_detail = $(this).closest('td').parent().find('td.cancelQuantity').children().attr("id").split('_')[1];
+			switch (discount_information.type){
+				case 0 :
+					total_tax_incl += $(this).val() * quantity_refund_product;
+					break;
+				case 1 :
+				case 2 :
+					total_tax_incl += $(this).val() * quantity_refund_product;
+					total_discount_tax_incl += ($(this).val() * discount_information.reduction_percent ) * quantity_refund_product;
+					break;
+				case 3 :
+					total_tax_incl += $(this).val() * quantity_refund_product;
+					/** convert object to array Js */
+					var discounted_products = $.map(discount_information.discounted_products, function(value, index){
+						return [value];
+					});
+					price = $(this).val();
+					discounted_products.forEach(function (element)
+					{
+						if(id_order_detail == element.id_order_detail)
+							total_discount_tax_incl += (price * element.reduction_percent ) * quantity_refund_product;
+					});
+					break;
+				default :
+					break;
+			}
+		}
+
 	});
 	$('#total_refund_1').remove();
-	$('#lab_refund_total_1').append('<span id="total_refund_1">' + formatCurrency(total, currency_format, currency_sign, currency_blank) + '</span>');
+	$('#lab_refund_total_1').append('<span id="total_refund_1">' + formatCurrency(total_tax_incl, currency_format, currency_sign, currency_blank) + '</span>');
 	$('#lab_refund_total_1').append('<input type="hidden" name="order_discount_price" value=' + order_discount_price + '/>');
 	$('#total_refund_2').remove();
-	if (parseFloat(total - order_discount_price) > 0.0) {
+	if (parseFloat(total_discount_tax_incl) > 0.0) {
 		document.getElementById('refund_total_2').disabled = false;
-		$('#lab_refund_total_2').append('<span id="total_refund_2">' + formatCurrency((total - order_discount_price), currency_format, currency_sign, currency_blank) + '</span>');
+		$('#lab_refund_total_2').append('<span id="total_refund_2">' + formatCurrency((total_tax_incl - total_discount_tax_incl), currency_format, currency_sign, currency_blank) + '</span>');
 	}
 	else {
 		if (document.getElementById('refund_total_2').checked === true)
 			document.getElementById('refund_total_1').checked = true;
 		document.getElementById('refund_total_2').disabled = true;
-		$('#lab_refund_total_2').append('<span id="total_refund_2">' + errorRefund + '</span>');
+		if(0.0 == total_discount_tax_incl){
+			$('#lab_refund_total_2').append('<span id="total_refund_2">' + formatCurrency((total_tax_incl - total_discount_tax_incl), currency_format, currency_sign, currency_blank) + '</span>');
+		} else {
+			$('#lab_refund_total_2').append('<span id="total_refund_2">' + errorRefund + '</span>');
+		}
 	}
 }
 

@@ -2290,22 +2290,40 @@ class OrderCore extends ObjectModel
             if  (!empty($discounted_products) && in_array($order_detail['product_id'],$discounted_products)) {
                 $cart_rule = $products_cart_rule[$order_detail['product_id']];
                 /** compute discount */
-                if( 0 !== (int)$cart_rule->reduction_percent){
-                    $reduction_percent = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
-                }elseif(0 !== (int)$cart_rule->reduction_amount){
-                    $original_order = new Order((int) $this->id);
-                    $reduction_percent = 100/($original_order->total_products/$cart_rule->reduction_amount);
-                    $reduction_percent = Tools::ps_round($reduction_percent/100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+                $total_price_tax_excl = null; // to verify
+                if ( 0 !== (int) $cart_rule->reduction_amount ) {
+                    $original_order = new Order( (int) $this->id );
+                    $product = $original_order->getProductDetailByIdProduct( $order_detail['product_id'] );
+                    if ( NULL !== $product ) {
+                        $total_price_tax_excl = $product['total_price_tax_excl'];
+                    }
                 }
+                $reduction_percent = $this->discountCalculator( $cart_rule, FALSE, $total_price_tax_excl );
+
+//                if( 0 !== (int)$cart_rule->reduction_percent){
+//                    $reduction_percent = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//                }elseif ( 0 !== (int) $cart_rule->reduction_amount ) {
+//                    $original_order = new Order( (int) $this->id );
+//                    $product = $original_order->getProductDetailByIdProduct( $order_detail['product_id'] );
+//                    if ( NULL !== $product ) {
+//                        $reduction_percent = 100 / ($product['total_price_tax_excl'] / $cart_rule->reduction_amount);
+//                        $reduction_percent = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
+//                    }
+//                }
             }elseif(empty($discounted_products)){
                 /** compute discount */
-                if( 0 !== (int)$cart_rule->reduction_percent){
-                    $reduction_percent = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
-                }elseif(0 !== (int)$cart_rule->reduction_amount){
-                    $original_order = new Order((int) $this->id);
-                    $reduction_percent = 100/($original_order->total_products/$cart_rule->reduction_amount);
-                    $reduction_percent = Tools::ps_round($reduction_percent/100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+                $reduction_percent = $this->discountCalculator( $cart_rule );
+                if ( 0 == $reduction_percent ) {
+                    $reduction_percent = NULL;
                 }
+
+//                if( 0 !== (int)$cart_rule->reduction_percent){
+//                    $reduction_percent = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//                }elseif(0 !== (int)$cart_rule->reduction_amount){
+//                    $original_order = new Order((int) $this->id);
+//                    $reduction_percent = 100/($original_order->total_products/$cart_rule->reduction_amount);
+//                    $reduction_percent = Tools::ps_round($reduction_percent/100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//                }
             }
 
             $id_order_detail = $order_detail['id_order_detail'];
@@ -2418,5 +2436,121 @@ class OrderCore extends ObjectModel
             'INNER JOIN '._DB_PREFIX_.'tax t ON t.id_tax = odt.id_tax '.
             'WHERE o.id_order = '.(int)$this->id
         );
+    }
+
+    /**
+     * get discount information of all order detail products 
+     * @param bool $json_format
+     * @return array|string
+     */
+    public function getDiscountInformation($json_format = FALSE){
+        $discount_information = array(
+          'type' => 0,            /** 0: no discount - 1: discount percent - 2: discount amount - 3: mixed  */
+          'reduction_percent' => 0,
+          'discounted_products' => null
+        );
+
+        $discounted_products = array();
+        foreach ( $this->getOrderDetailList() as $key => $order_detail ) {
+            $discounted_products[$order_detail['product_id']] = array(
+              'id_order_detail' => $order_detail['id_order_detail'],
+              'unit_price_tax_incl' => $order_detail['unit_price_tax_incl'],
+              'unit_price_tax_excl' => $order_detail['unit_price_tax_excl'],
+              'total_price_tax_excl' => $order_detail['total_price_tax_excl'],
+              'reduction_percent' => 0
+            );
+        }
+        foreach ( $this->getCartRules() as $order_cart_rule ) {
+            $cart_rule = new CartRule( $order_cart_rule['id_cart_rule'] );
+            /** get all discounted products with CartRules */
+            if ( !empty($discount_products_rule_groups = $cart_rule->getProductRuleGroups()) ) {
+                $discount_information['type'] = 3;
+                /** get discounted products */
+                foreach ( $discount_products_rule_groups as $id_product_rule_group => $product_rule_group ) {
+                    foreach ( $product_rule_group['product_rules'] as $product_rule ) {
+                        if ( "products" === $product_rule['type'] ) {
+                            /** compute discount */
+                            $reduction = $this->discountCalculator($cart_rule,false,$discounted_products[$product_rule['values'][0]]['total_price_tax_excl']);
+//                            if( 0 !== (int)$cart_rule->reduction_percent){
+//                                $reduction = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//                            }elseif ( 0 !== (int) $cart_rule->reduction_amount ) {
+//                                $reduction_percent = 100 / ($discounted_products[$product_rule['values'][0]]['total_price_tax_excl'] / $cart_rule->reduction_amount);
+//                                $reduction = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode );
+//                            }
+                            $discounted_products[$product_rule['values'][0]]['reduction_percent'] = $reduction;
+                        }
+                    }
+                }
+            }
+        }
+
+        if(3 === (int)$discount_information['type']){
+            $discount_information['discounted_products'] = $discounted_products;
+        }else{
+            /** compute discount */
+            $discuont = $this->discountCalculator( $cart_rule, TRUE );
+            $discount_information['type'] = $discuont['reduction_type'];
+            $discount_information['reduction_percent'] = $discuont['reduction_percent'];
+//            if( 0 !== (int)$cart_rule->reduction_percent ){
+//                $discount_information['type'] = 1;
+//                $discount_information['reduction_percent'] = Tools::ps_round(($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//            }elseif(0 !== (int)$cart_rule->reduction_amount ){
+//                $discount_information['type'] = 2;
+//                $original_order = new Order((int) $this->id);
+//                $reduction_percent = 100/($original_order->total_products/$cart_rule->reduction_amount);
+//                $discount_information['reduction_percent'] = Tools::ps_round($reduction_percent/100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode);
+//            }
+        }
+
+        return ($json_format ? json_encode($discount_information) : $discount_information);
+    }
+
+    /**
+     * get product detail by id
+     * @param $product_id
+     * @return null|array
+     */
+    public function getProductDetailByIdProduct($product_id){
+        foreach ($this->getProductsDetail() as $key => $product){
+            if($product_id == $product['product_id'])
+                return $product;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param $cart_rule
+     * @param bool $array_format
+     * @param null $total_price_tax_excl
+     * @return array|float|int
+     */
+    public function discountCalculator($cart_rule, $array_format = FALSE, $total_price_tax_excl = null) {
+        $reduction = 0;
+        $type = 0;
+        if ( 0 !== (int) $cart_rule->reduction_percent ) {
+            $type = 1;
+            $reduction = Tools::ps_round( ($cart_rule->reduction_percent / 100), _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode );
+        }
+        elseif ( 0 !== (int) $cart_rule->reduction_amount ) {
+            $type = 2;
+            if(null === $total_price_tax_excl) {
+                $original_order = new Order( (int) $this->id );
+                $reduction_percent = 100 / ($original_order->total_products / $cart_rule->reduction_amount);
+                $reduction = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode );
+            }else{
+                $reduction_percent = 100 / ($total_price_tax_excl/ $cart_rule->reduction_amount);
+                $reduction = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
+            }
+        }
+
+        if ( $array_format ) {
+            return array(
+              'reduction_percent' => $reduction,
+              'reduction_type' => $type,                /** 0: no discount - 1: discount percent - 2: discount amount */
+            );
+        }
+
+        return $reduction;
     }
 }
