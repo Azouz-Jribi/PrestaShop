@@ -2388,6 +2388,7 @@ class OrderCore extends ObjectModel
             }
         }
 
+//        var_dump($order_detail_tax_rows);die;
         return $order_detail_tax_rows;
     }
 
@@ -2536,10 +2537,12 @@ class OrderCore extends ObjectModel
             $type = 2;
             if(null === $total_price_tax_excl) {
                 $original_order = new Order( (int) $this->id );
-                $reduction_percent = 100 / ($original_order->total_products / $cart_rule->reduction_amount);
+                $order_cart_rule = $original_order->getOrderCartRuels($cart_rule->id);
+                $reduction_percent = 100 / ($original_order->total_products / $order_cart_rule['value_tax_excl']);
                 $reduction = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->round_mode );
             }else{
-                $reduction_percent = 100 / ($total_price_tax_excl/ $cart_rule->reduction_amount);
+                $order_cart_rule = $this->getOrderCartRuels($cart_rule->id);
+                $reduction_percent = 100 / ($total_price_tax_excl/ $order_cart_rule['value_tax_excl']);
                 $reduction = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
             }
         }
@@ -2552,5 +2555,20 @@ class OrderCore extends ObjectModel
         }
 
         return $reduction;
+    }
+
+    /**
+     * get order cart rules by id cart rule
+     * @param $id_cart_rule
+     * @return null
+     */
+    function getOrderCartRuels($id_cart_rule){
+        foreach ($this->getCartRules() as $key => $order_cart_rule){
+            if($id_cart_rule == $order_cart_rule['id_cart_rule']){
+                return $order_cart_rule;
+            }
+        }
+
+        return null;
     }
 }

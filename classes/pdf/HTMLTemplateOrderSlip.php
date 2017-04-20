@@ -170,7 +170,8 @@ class HTMLTemplateOrderSlipCore extends HTMLTemplateInvoice
                                         $cart_rule['value_tax_excl'] /= $product['product_quantity'];
                                     }
                                     elseif ( 0 !== (int) $cart->reduction_amount && NULL !== $product ) {
-                                        $reduction_percent = 100 / ($product['total_price_tax_excl'] / $cart->reduction_amount);
+                                        $order_cart_rule = $this->order->getOrderCartRuels($cart->id);
+                                        $reduction_percent = 100 / ($product['total_price_tax_excl'] / $order_cart_rule['value_tax_excl']);
                                         $reduction_percent = Tools::ps_round( $reduction_percent / 100, _PS_PRICE_COMPUTE_PRECISION_, $this->order->round_mode );
                                         $cart_rule['value'] /= $product['product_quantity'];
                                         $cart_rule['value_tax_excl'] /= $product['product_quantity'];
